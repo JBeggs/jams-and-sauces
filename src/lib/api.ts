@@ -38,17 +38,23 @@ function drfErrorToMessage(value: unknown, fallback: string): string {
 
 /** Use in catch blocks so API/network errors always produce a visible toast message. */
 export function getApiErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
+  if (typeof error === 'string' && error.trim()) return error.trim()
   if (error instanceof Error && error.message) return error.message
   if (error && typeof error === 'object') {
-    const o = error as { message?: unknown; details?: unknown }
+    const o = error as { message?: unknown; details?: Record<string, unknown> }
     const fromMsg = drfErrorToMessage(o.message, '')
     if (fromMsg) return fromMsg
+    const errPayload =
+      o.details && typeof o.details === 'object' && 'error' in o.details ? o.details.error : undefined
+    if (errPayload !== undefined && errPayload !== null) {
+      const fromValidation = drfErrorToMessage(errPayload, '')
+      if (fromValidation) return fromValidation
+    }
     if (o.details && typeof o.details === 'object') {
       const fromDetails = drfErrorToMessage(o.details, '')
       if (fromDetails) return fromDetails
     }
   }
-  if (typeof error === 'string' && error.trim()) return error
   return fallback
 }
 
@@ -177,9 +183,7 @@ export class ApiClient {
         } else {
           this.setToken(null)
           this.setRefreshToken(null)
-          if (typeof window !== 'undefined') {
-            window.location.href = '/login'
-          }
+          this.redirectToLoginIfNeeded()
           return null
         }
       } catch (error) {
@@ -265,9 +269,43 @@ export class ApiClient {
     return headers
   }
 
+  /** 401 from these paths must reach callers (login form), not token-refresh intercept. */
+  private isAuthHandshakeUrl(urlStr: string): boolean {
+    if (!urlStr) return false
+    let pathname = ''
+    try {
+      pathname = new URL(urlStr).pathname
+    } catch {
+      return false
+    }
+    const authMarkers = [
+      '/auth/login',
+      '/auth/register',
+      '/auth/refresh',
+      '/auth/password-reset',
+      '/auth/magic-link',
+      '/auth/verify-email',
+      '/auth/check-registration-email',
+      '/auth/link-tenant',
+    ]
+    return authMarkers.some((m) => pathname.includes(m))
+  }
+
+  private redirectToLoginIfNeeded(): void {
+    if (typeof window === 'undefined') return
+    const p = window.location.pathname || ''
+    if (p === '/login' || p.startsWith('/login/')) return
+    window.location.href = '/login'
+  }
+
   private async handleResponse<T>(response: Response, retryRequest?: () => Promise<Response>): Promise<T> {
     if (!response.ok) {
-      if (response.status === 401 && this.getRefreshToken() && retryRequest) {
+      if (
+        response.status === 401 &&
+        this.getRefreshToken() &&
+        retryRequest &&
+        !this.isAuthHandshakeUrl(response.url || '')
+      ) {
         const newToken = await this.attemptTokenRefresh()
         if (newToken) {
           const retryResponse = await retryRequest()
@@ -535,6 +573,8 @@ export const authApi = {
     company_name?: string
     company_email?: string
     full_name?: string
+    first_name?: string
+    last_name?: string
     phone?: string
     password_confirm?: string
     role?: string
@@ -562,7 +602,13 @@ export const authApi = {
         requestData.last_name = nameParts.slice(1).join(' ') || ''
       }
     } else {
-      if (data.full_name) {
+      if (
+        (data.first_name != null && data.first_name !== '') ||
+        (data.last_name != null && data.last_name !== '')
+      ) {
+        requestData.first_name = (data.first_name || '').trim()
+        requestData.last_name = (data.last_name || '').trim()
+      } else if (data.full_name) {
         const nameParts = data.full_name.trim().split(/\s+/)
         requestData.first_name = nameParts[0] || ''
         requestData.last_name = nameParts.slice(1).join(' ') || ''
@@ -670,7 +716,7 @@ export const authApi = {
   async magicLinkRequest(email: string) {
     return apiClient.post<{ detail: string }>(
       '/auth/magic-link/request/',
-      { email: email.trim().toLowerCase() },
+      { email: email.trim().toLowerCase(), company_slug: DEFAULT_COMPANY_SLUG },
       false,
     )
   },
@@ -695,9 +741,50 @@ export const authApi = {
   async resendVerificationEmail(email: string) {
     return apiClient.post<{ detail: string }>(
       '/auth/resend-verification/',
-      { email: email.trim().toLowerCase() },
+      { email: email.trim().toLowerCase(), company_slug: DEFAULT_COMPANY_SLUG },
       false,
     )
+  },
+  async checkRegistrationEmail(email: string, options?: { linkable?: boolean }) {
+    return apiClient.post<{ status: 'available' | 'existing_can_link' | 'existing_no_link' | 'already_linked' }>(
+      '/auth/check-registration-email/',
+      {
+        email: email.trim().toLowerCase(),
+        company_slug: DEFAULT_COMPANY_SLUG,
+        linkable: options?.linkable ?? true,
+      },
+      false,
+    )
+  },
+  async linkTenantAccount(data: { email: string; password: string }) {
+    const response = await apiClient.post<{
+      user: any
+      company: { id: string; name: string }
+      tokens?: { access: string; refresh: string }
+      profile?: { role: string; is_verified: boolean }
+      account_linked?: boolean
+      email_verification_required?: boolean
+    }>(
+      '/auth/link-tenant/',
+      {
+        email: data.email.trim().toLowerCase(),
+        password: data.password,
+        company_slug: DEFAULT_COMPANY_SLUG,
+      },
+      false,
+    )
+
+    if (response.tokens?.access) {
+      apiClient.setToken(response.tokens.access)
+      if (response.tokens?.refresh) {
+        apiClient.setRefreshToken(response.tokens.refresh)
+      }
+      if (response.company?.id) {
+        apiClient.setCompanyId(response.company.id)
+      }
+    }
+
+    return response
   },
 
   logout() {

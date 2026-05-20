@@ -18,6 +18,7 @@ import { Header } from '@/components/layout/Header'
 import { Footer } from '@/components/layout/Footer'
 import { CookieConsentBanner } from '@/components/layout/CookieConsentBanner'
 import { getCompany } from '@/lib/company'
+import { iconUrl } from '@/lib/icon-cache-version'
 import { resolveLocale } from '@/lib/locale'
 
 // Header/Footer/metadata all read cookies or live company data.
@@ -78,9 +79,11 @@ export async function generateMetadata(): Promise<Metadata> {
       description: company.description,
       icons: {
         icon: [
-          { url: '/favicon.ico', sizes: 'any' },
+          { url: iconUrl('/icon.png'), sizes: '512x512', type: 'image/png' },
+          { url: iconUrl('/favicon.png'), sizes: '32x32', type: 'image/png' },
+          { url: iconUrl('/favicon.ico'), sizes: 'any' },
         ],
-        apple: '/apple-touch-icon.png',
+        apple: iconUrl('/apple-touch-icon.png'),
       },
       openGraph: {
         title,
@@ -102,9 +105,11 @@ export async function generateMetadata(): Promise<Metadata> {
       description: 'Discover our collection.',
       icons: {
         icon: [
-          { url: '/favicon.ico', sizes: 'any' },
+          { url: iconUrl('/icon.png'), sizes: '512x512', type: 'image/png' },
+          { url: iconUrl('/favicon.png'), sizes: '32x32', type: 'image/png' },
+          { url: iconUrl('/favicon.ico'), sizes: 'any' },
         ],
-        apple: '/apple-touch-icon.png',
+        apple: iconUrl('/apple-touch-icon.png'),
       },
     }
   }
